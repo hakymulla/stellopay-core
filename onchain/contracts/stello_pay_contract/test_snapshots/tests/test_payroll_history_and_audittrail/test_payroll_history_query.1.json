@@ -291,6 +291,31 @@
                   "map": [
                     {
                       "key": {
+                        "symbol": "cpu_insns"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "cpu_insns_per_type"
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "escrow"
+                            },
+                            "val": {
+                              "u64": 0
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "employee_count"
                       },
                       "val": {
@@ -307,10 +332,55 @@
                     },
                     {
                       "key": {
+                        "symbol": "mem_bytes"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "mem_bytes_per_type"
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "escrow"
+                            },
+                            "val": {
+                              "u64": 0
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "operation_count"
                       },
                       "val": {
                         "u64": 2
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "operation_type_amount"
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "escrow"
+                            },
+                            "val": {
+                              "i128": {
+                                "hi": 0,
+                                "lo": 0
+                              }
+                            }
+                          }
+                        ]
                       }
                     },
                     {
@@ -354,7 +424,7 @@
                         "symbol": "total_disbursements"
                       },
                       "val": {
-                        "u64": 2
+                        "u64": 0
                       }
                     }
                   ]

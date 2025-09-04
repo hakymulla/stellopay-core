@@ -3,8 +3,8 @@ use soroban_sdk::{
     Env, Symbol, Vec, String, Map,log
 };
 
-use crate::events::{emit_disburse, DEPOSIT_EVENT, PAUSED_EVENT, UNPAUSED_EVENT, EMPLOYEE_PAUSED_EVENT, EMPLOYEE_RESUMED_EVENT, METRICS_UPDATED_EVENT, TEMPLATE_CREATED_EVENT, TEMPLATE_UPDATED_EVENT, TEMPLATE_APPLIED_EVENT, TEMPLATE_SHARED_EVENT, PRESET_CREATED_EVENT, BACKUP_CREATED_EVENT, BACKUP_VERIFIED_EVENT, RECOVERY_STARTED_EVENT, RECOVERY_COMPLETED_EVENT, SCHEDULE_CREATED_EVENT, SCHEDULE_UPDATED_EVENT, SCHEDULE_EXECUTED_EVENT, RULE_CREATED_EVENT, RULE_EXECUTED_EVENT, ROLE_ASSIGNED_EVENT, ROLE_REVOKED_EVENT, SECURITY_AUDIT_EVENT, SECURITY_POLICY_VIOLATION_EVENT};
-use crate::storage::{DataKey, Payroll, PayrollInput, CompactPayroll, PerformanceMetrics, CompactPayrollHistoryEntry, PayrollTemplate, TemplatePreset, PayrollBackup, BackupData, BackupMetadata, BackupType, BackupStatus, RecoveryPoint, RecoveryType, RecoveryStatus, RecoveryMetadata, PayrollSchedule, ScheduleType, ScheduleFrequency, ScheduleMetadata, AutomationRule, RuleType, RuleCondition, RuleAction, ConditionOperator, LogicalOperator, ActionType, UserRole, Permission, Role, UserRoleAssignment, SecurityPolicy, SecurityPolicyType, SecurityRule, SecurityRuleOperator, SecurityRuleAction, SecurityAuditEntry, SecurityAuditResult, RateLimitConfig, SecuritySettings, SuspiciousActivity, SuspiciousActivityType, SuspiciousActivitySeverity};
+use crate::events::{emit_disburse, DEPOSIT_EVENT, PAUSED_EVENT, UNPAUSED_EVENT, EMPLOYEE_PAUSED_EVENT, EMPLOYEE_RESUMED_EVENT, METRICS_UPDATED_EVENT, TEMPLATE_CREATED_EVENT, TEMPLATE_UPDATED_EVENT, TEMPLATE_APPLIED_EVENT, TEMPLATE_SHARED_EVENT, PRESET_CREATED_EVENT, BACKUP_CREATED_EVENT, BACKUP_VERIFIED_EVENT, RECOVERY_STARTED_EVENT, RECOVERY_COMPLETED_EVENT, SCHEDULE_CREATED_EVENT, SCHEDULE_UPDATED_EVENT, SCHEDULE_EXECUTED_EVENT, RULE_CREATED_EVENT, RULE_EXECUTED_EVENT, ROLE_ASSIGNED_EVENT, ROLE_REVOKED_EVENT, SECURITY_AUDIT_EVENT, SECURITY_POLICY_VIOLATION_EVENT, GAS_METRICS_EVENT};
+use crate::storage::{DataKey, Payroll, GasMetrics, PayrollInput, CompactPayroll, PerformanceMetrics, AveragePerformanceMetrics,CompactPayrollHistoryEntry, PayrollTemplate, TemplatePreset, PayrollBackup, BackupData, BackupMetadata, BackupType, BackupStatus, RecoveryPoint, RecoveryType, RecoveryStatus, RecoveryMetadata, PayrollSchedule, ScheduleType, ScheduleFrequency, ScheduleMetadata, AutomationRule, RuleType, RuleCondition, RuleAction, ConditionOperator, LogicalOperator, ActionType, UserRole, Permission, Role, UserRoleAssignment, SecurityPolicy, SecurityPolicyType, SecurityRule, SecurityRuleOperator, SecurityRuleAction, SecurityAuditEntry, SecurityAuditResult, RateLimitConfig, SecuritySettings, SuspiciousActivity, SuspiciousActivityType, SuspiciousActivitySeverity};
 use crate::insurance::{InsuranceSystem, InsuranceError, InsurancePolicy, InsuranceClaim, Guarantee, InsuranceSettings};
 use crate::enterprise::{self, Department, ApprovalWorkflow, ApprovalStep, WebhookEndpoint, ReportTemplate, BackupSchedule, EnterpriseDataKey, PayrollModificationRequest, PayrollModificationType, PayrollModificationStatus, Approval, ApprovalStatus, Dispute, DisputeType, DisputeStatus, DisputePriority, Escalation, EscalationLevel, Mediator, DisputeSettings};
 
@@ -339,94 +339,97 @@ impl PayrollContract {
         interval: u64,
         recurrence_frequency: u64,
     ) -> Result<Payroll, PayrollError> {
-        // Optimized validation with early returns
-        Self::validate_payroll_input(amount, interval, recurrence_frequency)?;
+        let (payroll, gas_metrics) = Self::track_gas(&env, symbol_short!("escrow"), |env| {
 
-        employer.require_auth();
+            // Optimized validation with early returns
+            Self::validate_payroll_input(amount, interval, recurrence_frequency)?;
 
-        // Get cached contract state to reduce storage reads
-        let cache = Self::get_contract_cache(&env);
-        let storage = env.storage().persistent();
+            employer.require_auth();
 
-        // Check authorization with cached data
-        let existing_payroll = Self::_get_payroll(&env, &employee);
-        let is_owner = cache.owner.as_ref().map_or(false, |owner| &employer == owner);
+            // Get cached contract state to reduce storage reads
+            let cache = Self::get_contract_cache(&env);
+            let storage = env.storage().persistent();
 
-        if let Some(ref existing) = existing_payroll {
-            // For updates, only the contract owner or the existing payroll's employer can call
-            if !is_owner && &employer != &existing.employer {
+            // Check authorization with cached data
+            let existing_payroll = Self::_get_payroll(&env, &employee);
+            let is_owner = cache.owner.as_ref().map_or(false, |owner| &employer == owner);
+
+            if let Some(ref existing) = existing_payroll {
+                // For updates, only the contract owner or the existing payroll's employer can call
+                if !is_owner && &employer != &existing.employer {
+                    return Err(PayrollError::Unauthorized);
+                }
+            } else if !is_owner {
+                // For creation, only the contract owner can call
                 return Err(PayrollError::Unauthorized);
             }
-        } else if !is_owner {
-            // For creation, only the contract owner can call
-            return Err(PayrollError::Unauthorized);
-        }
 
-        let current_time = env.ledger().timestamp();
-        let last_payment_time = if let Some(ref existing) = existing_payroll {
-            // If updating, preserve last payment time
-            existing.last_payment_time
-        } else {
-            // If creating, set to current time
-            current_time
-        };
-
-        let next_payout_timestamp = current_time + recurrence_frequency;
-
-        let payroll = Payroll {
-            employer: employer.clone(),
-            token: token.clone(),
-            amount,
-            interval,
-            last_payment_time,
-            recurrence_frequency,
-            next_payout_timestamp,
-            is_paused: false
-        };
-
-        // Store the payroll using compact format for gas efficiency
-        let compact_payroll = Self::to_compact_payroll(&payroll);
-        storage.set(&DataKey::Payroll(employee.clone()), &compact_payroll);
-
-        // Update indexing efficiently
-        Self::update_indexes_efficiently(&env, &employer, &token, &employee, IndexOperation::Add);
-
-        // Record history entry
-        Self::record_history(
-            &env, 
-            &employee, 
-            &compact_payroll,
-            if existing_payroll.is_some() {
-                symbol_short!("updated")
+            let current_time = env.ledger().timestamp();
+            let last_payment_time = if let Some(ref existing) = existing_payroll {
+                // If updating, preserve last payment time
+                existing.last_payment_time
             } else {
-                symbol_short!("created")
-            },
-        );
+                // If creating, set to current time
+                current_time
+            };
 
-        // Automatically add token as supported if it's not already
-        if !Self::is_token_supported(env.clone(), token.clone()) {
-            let key = DataKey::SupportedToken(token.clone());
-            storage.set(&key, &true);
+            let next_payout_timestamp = current_time + recurrence_frequency;
 
-            // Set default decimals (7 for Stellar assets)
-            let metadata_key = DataKey::TokenMetadata(token.clone());
-            storage.set(&metadata_key, &7u32);
-        }
+            let payroll = Payroll {
+                employer: employer.clone(),
+                token: token.clone(),
+                amount,
+                interval,
+                last_payment_time,
+                recurrence_frequency,
+                next_payout_timestamp,
+                is_paused: false
+            };
 
-        Self::record_metrics(&env, 0, symbol_short!("escrow"), true, Some(employee.clone()), false);
+            // Store the payroll using compact format for gas efficiency
+            let compact_payroll = Self::to_compact_payroll(&payroll);
+            storage.set(&DataKey::Payroll(employee.clone()), &compact_payroll);
 
+            // Update indexing efficiently
+            Self::update_indexes_efficiently(&env, &employer, &token, &employee, IndexOperation::Add);
 
-        // Emit payroll updated event
-        env.events().publish(
-            (UPDATED_EVENT,),
-            (
-                payroll.employer.clone(),
-                employee.clone(),
-                payroll.recurrence_frequency,
-            ),
-        );
+            // Record history entry
+            Self::record_history(
+                &env, 
+                &employee, 
+                &compact_payroll,
+                if existing_payroll.is_some() {
+                    symbol_short!("updated")
+                } else {
+                    symbol_short!("created")
+                },
+            );
 
-        Ok(payroll)
+            // Automatically add token as supported if it's not already
+            if !Self::is_token_supported(env.clone(), token.clone()) {
+                let key = DataKey::SupportedToken(token.clone());
+                storage.set(&key, &true);
+
+                // Set default decimals (7 for Stellar assets)
+                let metadata_key = DataKey::TokenMetadata(token.clone());
+                storage.set(&metadata_key, &7u32);
+            }
+
+            // Emit payroll updated event
+            env.events().publish(
+                (UPDATED_EVENT,),
+                (
+                    payroll.employer.clone(),
+                    employee.clone(),
+                    payroll.recurrence_frequency,
+                ),
+            );
+
+            Ok(payroll)
+        });
+        Self::record_metrics(&env, 0, symbol_short!("escrow"), true, Some(employee.clone()), false, gas_metrics);
+
+        payroll
     }
 
     /// Deposit tokens to employer's salary pool
@@ -441,37 +444,44 @@ impl PayrollContract {
         token: Address,
         amount: i128,
     ) -> Result<(), PayrollError> {
-        // Early validation
-        if amount <= 0 {
-            return Err(PayrollError::InvalidData);
-        }
+        let (_, gas_metrics) = Self::track_gas(&env, symbol_short!("deposit"), |env| {
+            // Early validation
+            if amount <= 0 {
+                return Err(PayrollError::InvalidData);
+            }
 
-        employer.require_auth();
+            employer.require_auth();
 
-        // Get cached contract state
-        let cache = Self::get_contract_cache(&env);
-        if let Some(true) = cache.is_paused {
-            return Err(PayrollError::ContractPaused);
-        }
+            // Get cached contract state
+            let cache = Self::get_contract_cache(&env);
+            if let Some(true) = cache.is_paused {
+                return Err(PayrollError::ContractPaused);
+            }
 
-        // Optimized token transfer with balance verification
-        Self::transfer_tokens_safe(&env, &token, &employer, &env.current_contract_address(), amount)?;
+            // Optimized token transfer with balance verification
+            Self::transfer_tokens_safe(&env, &token, &employer, &env.current_contract_address(), amount)?;
 
-        // Update balance in single operation
-        let storage = env.storage().persistent();
-        let balance_key = DataKey::Balance(employer.clone(), token.clone());
-        let current_balance: i128 = storage.get(&balance_key).unwrap_or(0);
-        storage.set(&balance_key, &(current_balance + amount));
+            // Update balance in single operation
+            let storage = env.storage().persistent();
+            let balance_key = DataKey::Balance(employer.clone(), token.clone());
+            let current_balance: i128 = storage.get(&balance_key).unwrap_or(0);
+            storage.set(&balance_key, &(current_balance + amount));
 
-        Self::record_metrics(&env, amount, symbol_short!("deposit"), true, None, false);
+            // Self::record_metrics(&env, amount, symbol_short!("deposit"), true, None, false);
 
-        env.events().publish(
-            (DEPOSIT_EVENT, employer, token), // topics
-            amount,                           // data
-        );
+            env.events().publish(
+                (DEPOSIT_EVENT, employer, token), // topics
+                amount,                           // data
+            );
 
+            Ok(())
+        });
+        Self::record_metrics(&env, amount, symbol_short!("deposit"), true, None, false, gas_metrics);
         Ok(())
+
     }
+
+       
 
     /// Get employer's token balance in the contract
     pub fn get_employer_balance(env: Env, employer: Address, token: Address) -> i128 {
@@ -513,74 +523,59 @@ impl PayrollContract {
         caller: Address,
         employee: Address,
     ) -> Result<(), PayrollError> {
-        caller.require_auth();
+        let (result, gas_metrics) = Self::track_gas(&env, symbol_short!("disburses"), |env| {
+            caller.require_auth();
+            // Get cached contract state
+            let cache = Self::get_contract_cache(&env);
+            if let Some(true) = cache.is_paused {
+                return Err(PayrollError::ContractPaused);
+            }
 
-        // Get cached contract state
-        let cache = Self::get_contract_cache(&env);
-        if let Some(true) = cache.is_paused {
-            // Self::record_metrics(&env, 0, symbol_short!("disburses"), false, Some(employee), Some(symbol_short!("paused")), false, false);
-            Self::record_metrics(&env, 0, symbol_short!("failed"), true, Some(employee.clone()), true);
+            let payroll = Self::_get_payroll(&env, &employee).ok_or(PayrollError::PayrollNotFound)?;
 
-            // log!(&env, "PAUSE: {}");
-            return Err(PayrollError::ContractPaused);
-        }
+            // Check if payroll is paused for this employee
+            if payroll.is_paused {
+                return Err(PayrollError::ContractPaused);
+            }
 
-        let payroll = Self::_get_payroll(&env, &employee).ok_or(PayrollError::PayrollNotFound)?;
+            // Only the employer can disburse salary
+            if caller != payroll.employer {
+                return Err(PayrollError::Unauthorized);
+            }
 
-        // Check if payroll is paused for this employee
-        if payroll.is_paused {
-            // Self::record_metrics(&env, 0, symbol_short!("disburses"), false, Some(employee), Some(symbol_short!("paused")), false, false);
-            Self::record_metrics(&env, payroll.amount, symbol_short!("failed"), true, Some(employee.clone()), true);
+            let current_time = env.ledger().timestamp();
+            let is_late = current_time > payroll.next_payout_timestamp;
+            // Check if next payout time has been reached
+            let current_time = env.ledger().timestamp();
+            if current_time < payroll.next_payout_timestamp {
+                return Err(PayrollError::NextPayoutTimeNotReached);
+            }
 
-            // log!(&env, "PAUSE2: {}");
-            return Err(PayrollError::ContractPaused);
-            // return Ok(());
-        }
+            // Optimized balance check and update
+            Self::check_and_update_balance(&env, &payroll.employer, &payroll.token, payroll.amount)?;
 
-        // Only the employer can disburse salary
-        if caller != payroll.employer {
-            // Self::record_metrics(&env, 0, symbol_short!("disburses"), false, Some(employee), Some(symbol_short!("unauth")), false, false);
-            Self::record_metrics(&env, payroll.amount, symbol_short!("failed"), true, Some(employee.clone()), true);
+            // Optimized token transfer
+            let contract_address = env.current_contract_address();
+            Self::transfer_tokens_safe(&env, &payroll.token, &contract_address, &employee, payroll.amount)?;
 
-            // log!(&env, "UNAUTH: {}");
-            return Err(PayrollError::Unauthorized);
-        }
+            // Optimized payroll update with minimal storage operations
+            Self::update_payroll_timestamps(&env, &employee, &payroll, current_time);
 
-        let current_time = env.ledger().timestamp();
-        let is_late = current_time > payroll.next_payout_timestamp;
-        // Check if next payout time has been reached
-        let current_time = env.ledger().timestamp();
-        if current_time < payroll.next_payout_timestamp {
-            // Self::record_metrics(&env, 0, symbol_short!("disburses"), false, Some(employee), Some(symbol_short!("early")), is_late, false);
-            // log!(&env, "EARLY: {}");
-            return Err(PayrollError::NextPayoutTimeNotReached);
-        }
+            Self::record_audit(&env, &employee, &payroll.employer, &payroll.token, payroll.amount, current_time);
 
-        // Optimized balance check and update
-        Self::check_and_update_balance(&env, &payroll.employer, &payroll.token, payroll.amount)?;
-
-        // Optimized token transfer
-        let contract_address = env.current_contract_address();
-        Self::transfer_tokens_safe(&env, &payroll.token, &contract_address, &employee, payroll.amount)?;
-
-
-        // Optimized payroll update with minimal storage operations
-        Self::update_payroll_timestamps(&env, &employee, &payroll, current_time);
-
-        Self::record_audit(&env, &employee, &payroll.employer, &payroll.token, payroll.amount, current_time);
-
-        // Self::record_metrics(&env, payroll.amount, symbol_short!("disburses"), true, Some(employee.clone()), None, false, true);
-        Self::record_metrics(&env, payroll.amount, symbol_short!("disburses"), true, Some(employee.clone()), is_late);
-
-        // Emit disburse eventSalaryDisbursed
-        emit_disburse(
-            env.clone(),
-            payroll.employer,
-            employee.clone(),
-            payroll.token.clone(),
-            payroll.amount,
-            current_time,
-        );
+            // Emit disburse eventSalaryDisbursed
+            emit_disburse(
+                env.clone(),
+                payroll.employer.clone(),
+                employee.clone(),
+                payroll.token.clone(),
+                payroll.amount.clone(),
+                current_time,
+            );
+            Ok((payroll, is_late))
+        });
+        let (payroll, is_late) = result?;
+        Self::record_metrics(&env, payroll.amount, symbol_short!("disburses"), true, Some(employee.clone()), is_late, gas_metrics);
         Ok(())
     }
 
@@ -1014,7 +1009,7 @@ impl PayrollContract {
             Self::record_audit(&env, &employee, &payroll.employer, &payroll.token, payroll.amount, batch_ctx.current_time);
 
             let is_late = batch_ctx.current_time > payroll.next_payout_timestamp;
-            Self::record_metrics(&env, payroll.amount, symbol_short!("disburses"), true, Some(employee.clone()), is_late);
+            // Self::record_metrics(&env, payroll.amount, symbol_short!("disburses"), true, Some(employee.clone()), is_late);
 
             // Emit individual disbursement event
             emit_disburse(
@@ -5140,118 +5135,6 @@ impl PayrollContract {
         Ok(86400) // Default value (1 day in seconds)
     }
 
-    // record_metrics(&env, 0, symbol_short!("disburses"), false, Some(employee), Some(symbol_short!("unauth")), false);
-    // record_metrics(env,amount. ,operation_type: Symbol, is_success, employee:    ,       error_type.         ,is_late: bool)
-    /// Record performance metrics for an operation with daily aggregation
-    // fn record_metrics(
-    //     env: &Env,
-    //     amount: i128,
-    //     operation_type: Symbol,
-    //     is_success: bool,
-    //     employee: Option<Address>,
-    //     error_type: Option<Symbol>,
-    //     is_late: bool,
-    // ) {
-    //     let storage = env.storage().persistent();
-        
-    //     // Convert timestamp to start of day (midnight UTC) for daily aggregation
-    //     let timestamp = env.ledger().timestamp();
-    //     log!(&env, "timestamp in record metrics: {}", timestamp);
-
-    //     let day_timestamp = (timestamp / 86_400) * 86_400; // Round down to nearest day (86,400 seconds)
-    //     // log!(&env, "day_timestamp: {}", day_timestamp);
-
-    //     let metrics_key = DataKey::Metrics(day_timestamp);
-
-    //     // Retrieve existing metrics or initialize new ones
-    //     let mut metrics: PerformanceMetrics = storage.get(&metrics_key).unwrap_or(PerformanceMetrics {
-    //         total_disbursements: 0,
-    //         total_amount: 0,
-    //         // gas_used: 0,
-    //         operation_count: 0,
-    //         timestamp: day_timestamp,
-    //         error_count: 0,
-    //         error_types: Map::new(&env),
-    //         employee_count: 0,
-    //         operation_type_counts: Map::new(&env),
-    //         // compliance_violations: 0,
-    //         late_disbursements: 0,
-    //     });
-
-    //     // Update metrics with overflow checks
-    //     let prev_operation_count = metrics.operation_count;
-
-    //     metrics.operation_count = metrics.operation_count.checked_add(1).unwrap_or(metrics.operation_count);
-
-    //     if is_success {
-    //         metrics.total_disbursements = metrics.total_disbursements.checked_add(1).unwrap_or(metrics.total_disbursements);
-    //         metrics.total_amount = metrics.total_amount.checked_add(amount).unwrap_or(metrics.total_amount);
-    //         log!(&env, "SUCCESS: {}");
-
-    //     } else {
-
-    //         metrics.error_count = metrics.error_count.checked_add(1).unwrap_or(metrics.error_count);
-    //         if let Some(err) = error_type {
-    //             let err_count = metrics.error_types.get(err.clone()).unwrap_or(0);
-    //             metrics.error_types.set(err, err_count.checked_add(1).unwrap_or(err_count));
-    //         }
-    //         log!(&env, "OTHERS: {}");
-
-
-    //     }
-    //     // metrics.gas_used = metrics.gas_used.checked_add(gas_used).unwrap_or(metrics.gas_used);
-
-    //     // Track unique employees
-    //     if let Some(emp) = employee {
-    //         let employee_key = DataKey::Employee(emp.clone());
-    //         if !storage.has(&employee_key) {
-    //             storage.set(&employee_key, &true);
-    //             metrics.employee_count = metrics.employee_count.checked_add(1).unwrap_or(metrics.employee_count);
-    //         }
-    //     }
-
-    //     // Update operation type counts
-    //     let current_count = metrics.operation_type_counts.get(operation_type.clone()).unwrap_or(0);
-    //     metrics.operation_type_counts.set(operation_type.clone(), current_count.checked_add(1).unwrap_or(current_count));
-
-    //     // Track compliance violations
-    //     // if is_compliance_issue {
-    //         // metrics.compliance_violations = metrics.compliance_violations.checked_add(1).unwrap_or(metrics.compliance_violations);
-    //     // }
-
-    //     // Track late disbursements
-    //     if is_late {
-    //         metrics.late_disbursements = metrics.late_disbursements.checked_add(1).unwrap_or(metrics.late_disbursements);
-    //     }
-
-    //     // Only write to storage if metrics have changed
-    //     // if metrics.operation_count > prev_operation_count || metrics.total_amount != 0 || metrics.error_count > 0 || metrics.late_disbursements > 0 {
-    //         storage.set(&metrics_key, &metrics);
-    //         log!(&env, "day_timestamp: {}", day_timestamp);
-    //         log!(&env, "metrics: {}", metrics);
-
-    //         // let res = Self::get_metrics(&env, Some(day_timestamp), Some(day_timestamp *3), Some(3));
-    //         // log!(&env, "res: {}", res);
-
-
-    //         // Publish event with key metrics
-    //         env.events().publish(
-    //             (METRICS_UPDATED_EVENT,),
-    //             (
-    //                 day_timestamp,
-    //                 operation_type,
-    //                 metrics.total_disbursements,
-    //                 metrics.total_amount,
-    //                 metrics.error_count,
-    //                 // metrics.compliance_violations,
-    //                 metrics.late_disbursements,
-    //             ),
-    //         );
-    //     // }
-    // }
-
-
-
     fn record_metrics(
         env: &Env,
         amount: i128,
@@ -5259,6 +5142,7 @@ impl PayrollContract {
         is_success: bool,
         employee: Option<Address>,
         is_late: bool,
+        record_metrics: GasMetrics
     ) {
         let storage = env.storage().persistent();
         let timestamp = env.ledger().timestamp();
@@ -5273,18 +5157,23 @@ impl PayrollContract {
             timestamp: day_timestamp,
             employee_count: 0,
             operation_type_counts: Map::new(&env),
+            operation_type_amount: Map::new(&env),
             late_disbursements: 0,
+            cpu_insns: 0,
+            mem_bytes: 0,
+            cpu_insns_per_type: Map::new(&env),
+            mem_bytes_per_type: Map::new(&env),
         });
 
         let prev_operation_count = metrics.operation_count;
         metrics.operation_count = metrics.operation_count.checked_add(1).unwrap_or(metrics.operation_count);
         if is_success {
-            metrics.total_disbursements = metrics.total_disbursements.checked_add(1).unwrap_or(metrics.total_disbursements);
             metrics.total_amount = metrics.total_amount.checked_add(amount).unwrap_or(metrics.total_amount);
-            // log!(&env, "SUCCESS: {}");
-        } else {
-            // log!(&env, "OTHERS: {}");
-        }
+        } 
+
+        if operation_type == symbol_short!("disburses") {
+            metrics.total_disbursements = metrics.total_disbursements.checked_add(1).unwrap_or(metrics.total_disbursements);
+        } 
 
         if let Some(emp) = employee.clone() {
             let employee_key = DataKey::Employee(emp.clone());
@@ -5297,16 +5186,23 @@ impl PayrollContract {
         let current_count = metrics.operation_type_counts.get(operation_type.clone()).unwrap_or(0);
         metrics.operation_type_counts.set(operation_type.clone(), current_count.checked_add(1).unwrap_or(current_count));
 
+        let current_amount = metrics.operation_type_amount.get(operation_type.clone()).unwrap_or(0);
+        metrics.operation_type_amount.set(operation_type.clone(), current_amount.checked_add(amount).unwrap_or(current_amount));
+
         if is_late {
             metrics.late_disbursements = metrics.late_disbursements.checked_add(1).unwrap_or(metrics.late_disbursements);
         }
 
+        metrics.cpu_insns = metrics.cpu_insns.checked_add(record_metrics.cpu_insns).unwrap_or(metrics.cpu_insns);
+        let current_cpu_insns = metrics.cpu_insns_per_type.get(operation_type.clone()).unwrap_or(0);
+        metrics.cpu_insns_per_type.set(operation_type.clone(), current_cpu_insns.checked_add(record_metrics.cpu_insns).unwrap_or(current_cpu_insns));
+
+        metrics.mem_bytes = metrics.mem_bytes.checked_add(record_metrics.mem_bytes).unwrap_or(metrics.mem_bytes);
+        let mem_bytes_per_type = metrics.mem_bytes_per_type.get(operation_type.clone()).unwrap_or(0);
+        metrics.mem_bytes_per_type.set(operation_type.clone(), mem_bytes_per_type.checked_add(record_metrics.mem_bytes).unwrap_or(mem_bytes_per_type));
+
         if metrics.operation_count > prev_operation_count || metrics.total_amount != 0 || metrics.late_disbursements > 0 {
             storage.set(&metrics_key, &metrics);
-            // log!(&env, "day_timestamp: {}", day_timestamp);
-            let res = Self::get_metrics(&env, Some(day_timestamp), Some(day_timestamp * 3), Some(3));
-            // log!(&env, "res: {}", res);
-
             env.events().publish(
                 (METRICS_UPDATED_EVENT,),
                 (
@@ -5351,14 +5247,19 @@ impl PayrollContract {
     }
 
     /// Calculate average metrics over a time range
-    pub fn calculate_avg_metrics(env: &Env, start_timestamp: u64, end_timestamp: u64) -> Option<PerformanceMetrics> {
+    pub fn calculate_total_metrics(env: &Env, start_timestamp: u64, end_timestamp: u64) -> Option<PerformanceMetrics> {
         let storage = env.storage().persistent();
         let mut total_disbursements = 0u64;
         let mut total_amount = 0i128;
         let mut total_operation_count = 0u64;
         let mut employee_count = 0u32;
         let mut operation_type_counts = Map::new(&env);
+        let mut operation_type_amount = Map::new(&env);
         let mut late_disbursements = 0u64;
+        let mut cpu_insns = 0u64;
+        let mut mem_bytes = 0u64;
+        let mut cpu_insns_per_type = Map::new(&env);
+        let mut mem_bytes_per_type = Map::new(&env);
 
         let start_day = (start_timestamp / 86_400) * 86_400;
         let end_day = (end_timestamp / 86_400) * 86_400;
@@ -5370,10 +5271,27 @@ impl PayrollContract {
                 total_operation_count = total_operation_count.checked_add(metrics.operation_count).unwrap_or(total_operation_count);
                 employee_count = employee_count.checked_add(metrics.employee_count).unwrap_or(employee_count);
                 late_disbursements = late_disbursements.checked_add(metrics.late_disbursements).unwrap_or(late_disbursements);
+                cpu_insns = cpu_insns.checked_add(metrics.cpu_insns).unwrap_or(cpu_insns);
+                mem_bytes = mem_bytes.checked_add(metrics.mem_bytes).unwrap_or(mem_bytes);
 
                 for (op_type, count) in metrics.operation_type_counts.iter() {
                     let current_count = operation_type_counts.get(op_type.clone()).unwrap_or(0);
                     operation_type_counts.set(op_type, (current_count as u64).checked_add(count as u64).unwrap_or(current_count));
+                }
+
+                for (op_type, amount) in metrics.operation_type_amount.iter() {
+                    let current_amount = operation_type_amount.get(op_type.clone()).unwrap_or(0);
+                    operation_type_amount.set(op_type, (current_amount as i128).checked_add(amount as i128).unwrap_or(current_amount));
+                }
+
+                for (op_type, count) in metrics.cpu_insns_per_type.iter() {
+                    let current_cpu_count = cpu_insns_per_type.get(op_type.clone()).unwrap_or(0);
+                    cpu_insns_per_type.set(op_type, (current_cpu_count as u64).checked_add(count as u64).unwrap_or(current_cpu_count));
+                }
+
+                for (op_type, count) in metrics.mem_bytes_per_type.iter() {
+                    let current_mem_count = mem_bytes_per_type.get(op_type.clone()).unwrap_or(0);
+                    mem_bytes_per_type.set(op_type, (current_mem_count as u64).checked_add(count as u64).unwrap_or(current_mem_count));
                 }
             }
         }
@@ -5389,7 +5307,12 @@ impl PayrollContract {
             timestamp: end_timestamp,
             employee_count,
             operation_type_counts,
+            operation_type_amount,
             late_disbursements,
+            cpu_insns,
+            mem_bytes,
+            cpu_insns_per_type,
+            mem_bytes_per_type
         })
     }
 
@@ -5419,7 +5342,7 @@ impl PayrollContract {
     }
 
     pub fn generate_performance_report(env: &Env, start_timestamp: u64, end_timestamp: u64) -> Option<PerformanceMetrics> {
-        let metrics = Self::calculate_avg_metrics(&env, start_timestamp, end_timestamp)?;
+        let metrics = Self::calculate_total_metrics(&env, start_timestamp, end_timestamp)?;
         env.events().publish(
             (METRICS_UPDATED_EVENT,),
             (
@@ -5432,13 +5355,120 @@ impl PayrollContract {
         Some(metrics)
     }
 
-    // /// Calculate payroll accuracy (percentage of successful operations)
-    // pub fn calculate_payroll_accuracy(env: &Env, start_timestamp: u64, end_timestamp: u64) -> Option<u64> {
-    //     let metrics = Self::calculate_avg_metrics(&env, start_timestamp, end_timestamp)?;
-    //     if metrics.operation_count == 0 {
-    //         return None;
-    //     }
-    //     Some((metrics.total_disbursements * 100) / metrics.operation_count)
-    // }
+    fn track_gas<T>(
+        env: &Env,
+        operation_type: Symbol,
+        operation: impl FnOnce(&Env) -> T,
+    ) -> (T, GasMetrics) {
 
+        let cpu_before = 0u64; // env.cost_estimate().budget().cpu_instruction_cost();
+        let mem_before = 0u64; // env.cost_estimate().budget().memory_bytes_cost();
+
+
+        let result = operation(env);
+
+        let cpu_after = 0u64; //env.cost_estimate().budget().cpu_instruction_cost();
+        let mem_after = 0u64; //env.cost_estimate().budget().memory_bytes_cost();
+
+        let gas_metrics = GasMetrics {
+            cpu_insns: cpu_after.saturating_sub(cpu_before),
+            mem_bytes: mem_after.saturating_sub(mem_before),
+
+        };
+        env.events().publish(
+            (GAS_METRICS_EVENT, operation_type.clone()),
+            (
+                gas_metrics.cpu_insns,
+                gas_metrics.mem_bytes,
+            ),
+        );
+
+        log!(&env, "GasMetrics for {}: cpu_insns: {}, mem_bytes: {}",
+             operation_type, gas_metrics.cpu_insns, gas_metrics.mem_bytes);
+
+        (result, gas_metrics)
+    }
+
+  pub fn calculate_avg_metrics(env: &Env, start_timestamp: u64, end_timestamp: u64) -> Option<AveragePerformanceMetrics> {
+        let storage = env.storage().persistent();
+        let mut total_amount = 0i128;
+        let mut total_disbursements = 0u64;
+        let mut total_cpu_insns = 0u64;
+        let mut total_mem_bytes = 0u64;
+        let mut total_operation_count = 0u64;
+        let mut late_disbursements = 0u64;
+        let mut total_employee_count = 0u32;
+        let mut operation_type_amount = Map::<Symbol, i128>::new(&env);
+        let mut operation_type_counts = Map::new(&env);
+        let mut cpu_insns_per_type = Map::new(&env);
+        let mut mem_bytes_per_type = Map::new(&env);
+
+        let start_day = (start_timestamp / 86_400) * 86_400;
+        let end_day = (end_timestamp / 86_400) * 86_400;
+        let num_days = ((end_day - start_day) / 86_400) + 1;
+
+        for timestamp in (start_day..=end_day).step_by(86_400) {
+            if let Some(metrics) = storage.get::<DataKey, PerformanceMetrics>(&DataKey::Metrics(timestamp)) {
+                total_amount = total_amount.checked_add(metrics.total_amount).unwrap_or(total_amount);
+                total_disbursements = total_disbursements.checked_add(metrics.total_disbursements).unwrap_or(total_disbursements);
+                total_cpu_insns = total_cpu_insns.checked_add(metrics.cpu_insns).unwrap_or(total_cpu_insns);
+                total_mem_bytes = total_mem_bytes.checked_add(metrics.mem_bytes).unwrap_or(total_mem_bytes);
+                total_operation_count = total_operation_count.checked_add(metrics.operation_count).unwrap_or(total_operation_count);
+                late_disbursements = late_disbursements.checked_add(metrics.late_disbursements).unwrap_or(late_disbursements);
+                total_employee_count = total_employee_count.checked_add(metrics.employee_count).unwrap_or(total_employee_count);
+
+                for (op_type, count) in metrics.operation_type_counts.iter() {
+                    let current_count = operation_type_counts.get(op_type.clone()).unwrap_or(0);
+                    operation_type_counts.set(op_type, (current_count as u64).checked_add(count as u64).unwrap_or(current_count));
+                }
+
+                for (op_type, amount) in metrics.operation_type_amount.iter() {
+                    let current_amount = operation_type_amount.get(op_type.clone()).unwrap_or(0);
+                    operation_type_amount.set(op_type, (current_amount).checked_add(amount).unwrap_or(current_amount));
+                }
+
+                for (op_type, cpu) in metrics.cpu_insns_per_type.iter() {
+                    let current_cpu = cpu_insns_per_type.get(op_type.clone()).unwrap_or(0);
+                    cpu_insns_per_type.set(op_type, (current_cpu as u64).checked_add(cpu as u64).unwrap_or(current_cpu));
+                }
+
+                for (op_type, mem) in metrics.mem_bytes_per_type.iter() {
+                    let current_mem = mem_bytes_per_type.get(op_type.clone()).unwrap_or(0);
+                    mem_bytes_per_type.set(op_type, (current_mem as u64).checked_add(mem as u64).unwrap_or(current_mem));
+                }
+            }
+        }
+
+        if total_operation_count == 0 || num_days == 0 {
+            return None;
+        }
+
+        let mut avg_operation_type_amount = Map::new(&env);
+        let mut avg_cpu_insns_per_type = Map::new(&env);
+        let mut avg_mem_bytes_per_type = Map::new(&env);
+
+        for (op_type, count) in operation_type_counts.iter() {
+            if count > 0 {
+                if let Some(amount) = operation_type_amount.get(op_type.clone()) {
+                    avg_operation_type_amount.set(op_type.clone(), amount / count as i128);
+                }
+                if let Some(cpu) = cpu_insns_per_type.get(op_type.clone()) {
+                    avg_cpu_insns_per_type.set(op_type.clone(), cpu / count);
+                }
+                if let Some(mem) = mem_bytes_per_type.get(op_type.clone()) {
+                    avg_mem_bytes_per_type.set(op_type.clone(), mem / count);
+                }
+            }
+        }
+
+        Some(AveragePerformanceMetrics {
+            avg_operation_type_amount,
+            avg_cpu_insns_per_type,
+            avg_mem_bytes_per_type,
+            avg_total_amount: total_amount / total_operation_count as i128,
+            avg_total_disbursements: total_disbursements / total_operation_count,
+            avg_late_disbursements: late_disbursements / total_operation_count,
+            avg_employee_count: total_employee_count / num_days as u32,
+        })
+    }
 }

@@ -21,6 +21,8 @@ pub const EMPLOYEE_RESUMED_EVENT: Symbol = symbol_short!("empresume");
 /// Event emitted when performance metrics are updated
 pub const METRICS_UPDATED_EVENT: Symbol = symbol_short!("metricupd");
 
+pub const GAS_METRICS_EVENT: Symbol = symbol_short!("gasmetric");
+
 // Insurance-related events
 pub const INS_POLICY_CREATED: Symbol = symbol_short!("ins_pol_c");
 pub const INS_POLICY_UPDATED: Symbol = symbol_short!("ins_pol_u");

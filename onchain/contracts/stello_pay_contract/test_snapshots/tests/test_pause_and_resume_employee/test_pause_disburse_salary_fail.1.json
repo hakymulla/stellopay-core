@@ -441,6 +441,39 @@
                   "map": [
                     {
                       "key": {
+                        "symbol": "cpu_insns"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "cpu_insns_per_type"
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "deposit"
+                            },
+                            "val": {
+                              "u64": 0
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "escrow"
+                            },
+                            "val": {
+                              "u64": 0
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "employee_count"
                       },
                       "val": {
@@ -457,10 +490,74 @@
                     },
                     {
                       "key": {
+                        "symbol": "mem_bytes"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "mem_bytes_per_type"
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "deposit"
+                            },
+                            "val": {
+                              "u64": 0
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "escrow"
+                            },
+                            "val": {
+                              "u64": 0
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "operation_count"
                       },
                       "val": {
                         "u64": 2
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "operation_type_amount"
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "deposit"
+                            },
+                            "val": {
+                              "i128": {
+                                "hi": 0,
+                                "lo": 5000
+                              }
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "escrow"
+                            },
+                            "val": {
+                              "i128": {
+                                "hi": 0,
+                                "lo": 0
+                              }
+                            }
+                          }
+                        ]
                       }
                     },
                     {
@@ -512,7 +609,7 @@
                         "symbol": "total_disbursements"
                       },
                       "val": {
-                        "u64": 2
+                        "u64": 0
                       }
                     }
                   ]
@@ -1623,28 +1720,19 @@
           "v0": {
             "topics": [
               {
-                "symbol": "metricupd"
+                "symbol": "gasmetric"
+              },
+              {
+                "symbol": "disburses"
               }
             ],
             "data": {
               "vec": [
                 {
-                  "u64": 2592000
+                  "u64": 0
                 },
                 {
-                  "symbol": "failed"
-                },
-                {
-                  "u64": 1
-                },
-                {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 1000
-                  }
-                },
-                {
-                  "u64": 1
+                  "u64": 0
                 }
               ]
             }

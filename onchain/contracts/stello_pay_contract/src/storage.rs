@@ -55,8 +55,33 @@ pub struct PerformanceMetrics {
     pub timestamp: u64,
     pub employee_count: u32,
     pub operation_type_counts: Map<Symbol, u64>,
+    pub operation_type_amount: Map<Symbol, i128>,
     pub late_disbursements: u64,
+    pub cpu_insns: u64,
+    pub mem_bytes: u64,
+    pub cpu_insns_per_type: Map<Symbol, u64>,
+    pub mem_bytes_per_type: Map<Symbol, u64>,
 }
+
+#[derive(Clone)]
+#[contracttype]
+pub struct AveragePerformanceMetrics {
+    pub avg_operation_type_amount: Map<Symbol, i128>,
+    pub avg_cpu_insns_per_type: Map<Symbol, u64>,
+    pub avg_mem_bytes_per_type: Map<Symbol, u64>,
+    pub avg_total_amount: i128,
+    pub avg_total_disbursements: u64,
+    pub avg_late_disbursements: u64,
+    pub avg_employee_count: u32,
+}
+
+#[derive(Clone)]
+#[contracttype]
+pub struct GasMetrics {
+    pub cpu_insns: u64,
+    pub mem_bytes: u64,
+}
+
 
 /// Structure for compact history storage
 #[contracttype]

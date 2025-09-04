@@ -718,6 +718,39 @@
                   "map": [
                     {
                       "key": {
+                        "symbol": "cpu_insns"
+                      },
+                      "val": {
+                        "u64": 1205100
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "cpu_insns_per_type"
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "deposit"
+                            },
+                            "val": {
+                              "u64": 588805
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "escrow"
+                            },
+                            "val": {
+                              "u64": 616295
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "employee_count"
                       },
                       "val": {
@@ -734,10 +767,74 @@
                     },
                     {
                       "key": {
+                        "symbol": "mem_bytes"
+                      },
+                      "val": {
+                        "u64": 229522
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "mem_bytes_per_type"
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "deposit"
+                            },
+                            "val": {
+                              "u64": 96188
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "escrow"
+                            },
+                            "val": {
+                              "u64": 133334
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "operation_count"
                       },
                       "val": {
                         "u64": 5
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "operation_type_amount"
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "deposit"
+                            },
+                            "val": {
+                              "i128": {
+                                "hi": 0,
+                                "lo": 6200
+                              }
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "escrow"
+                            },
+                            "val": {
+                              "i128": {
+                                "hi": 0,
+                                "lo": 0
+                              }
+                            }
+                          }
+                        ]
                       }
                     },
                     {
@@ -789,7 +886,7 @@
                         "symbol": "total_disbursements"
                       },
                       "val": {
-                        "u64": 5
+                        "u64": 0
                       }
                     }
                   ]

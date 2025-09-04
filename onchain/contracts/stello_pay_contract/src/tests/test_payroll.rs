@@ -2,7 +2,7 @@
 
 use crate::payroll::{PayrollContract, PayrollContractClient};
 use soroban_sdk::token::{StellarAssetClient as TokenAdmin, TokenClient};
-use soroban_sdk::TryFromVal;
+use soroban_sdk::{log, TryFromVal};
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger, LedgerInfo, MockAuth, MockAuthInvoke},
     vec, Address, Env, IntoVal, Symbol,
@@ -727,10 +727,11 @@ fn test_disburse_salary_emit_event() {
     let events = env.events().all();
 
     // Token `transfer`, `SalaryDisbursed` and record_audit events are expected
-    assert_eq!(events.len(), 4);
+    assert_eq!(events.len(), 5);
 
     // Get the emitted `SalaryDisbursed` event data
-    let data = events.get(3).unwrap();
+    let data = events.get(2).unwrap();
+    log!(&env, "events:{}", events);
 
     assert_eq!(data.0, contract_id);
 
